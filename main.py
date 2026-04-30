@@ -3,10 +3,11 @@ WhatsApp CV Analyzer - Main Application Entry Point
 FastAPI server for WhatsApp webhook handling and resume analysis.
 """
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 import logging
 import json
 import httpx
+import os
 
 from config import settings
 from whatsapp import WhatsAppClient
@@ -40,7 +41,11 @@ GREETING_MESSAGES = {"hi", "hello", "hey", "hii", "start", "help"}
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"status": "ok", "app": settings.APP_NAME}
+    return {
+        "status": "ok",
+        "app": settings.APP_NAME,
+        "environment": settings.ENVIRONMENT,
+    }
 
 
 @app.get("/webhook")
@@ -53,13 +58,24 @@ async def webhook_verify(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
 
-    logger.info(f"Webhook verification: mode={mode}, token={token}")
+    logger.info("Webhook verification request received")
+    logger.info(f"Mode: {mode}")
+    logger.info(f"Token received: '{token}'")
+    logger.info(f"Expected token: '{settings.WHATSAPP_VERIFY_TOKEN}'")
 
-    challenge_response = whatsapp_client.verify_webhook(mode, token, challenge)
+    challenge_response = whatsapp_client.verify_webhook(
+        mode=mode,
+        token=token,
+        challenge=challenge,
+    )
+
     if challenge_response:
-        return challenge_response
+        return PlainTextResponse(challenge_response)
 
-    raise HTTPException(status_code=403, detail="Verification failed")
+    raise HTTPException(
+        status_code=403,
+        detail="Verification failed",
+    )
 
 
 @app.post("/webhook")
@@ -70,7 +86,7 @@ async def webhook_receive(request: Request):
     """
     try:
         body = await request.json()
-        logger.info(f"Received webhook: {json.dumps(body, indent=2)}")
+        logger.info(f"Received webhook payload: {json.dumps(body, indent=2)}")
 
         entry = body.get("entry", [])
         if not entry:
@@ -92,8 +108,11 @@ async def webhook_receive(request: Request):
         return JSONResponse(content={"status": "ok"})
 
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return JSONResponse(content={"status": "error"}, status_code=500)
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return JSONResponse(
+            content={"status": "error"},
+            status_code=500,
+        )
 
 
 async def process_message(message: dict):
@@ -115,13 +134,18 @@ async def process_message(message: dict):
 
         if text in GREETING_MESSAGES:
             await send_welcome_message(from_id)
+
         elif text == "status":
             await send_status_message(from_id, user_session)
+
         else:
             await whatsapp_client.send_message(
                 from_id,
-                "Hi, welcome to CV Analyzer. We analyze resumes and provide great ATS feedback extremely fast. "
-                "Please send your CV in PDF or DOCX format to get started.",
+                (
+                    "Hi, welcome to CV Analyzer. "
+                    "We analyze resumes and provide ATS feedback quickly. "
+                    "Please send your CV in PDF or DOCX format to get started."
+                ),
             )
 
     elif message_type == "document":
@@ -129,33 +153,48 @@ async def process_message(message: dict):
         file_id = document.get("id")
         filename = document.get("filename", "resume.pdf")
 
-        await whatsapp_client.send_message(from_id, "Processing your CV. Please wait a moment.")
+        await whatsapp_client.send_message(
+            from_id,
+            "Processing your CV. Please wait a moment.",
+        )
 
         file_content = await download_whatsapp_file(file_id)
+
         if not file_content:
             await whatsapp_client.send_message(
                 from_id,
-                "Sorry, I could not download your CV. Please try sending the file again.",
+                "Sorry, I could not download your CV. Please try again.",
             )
             return
 
         try:
-            resume_text, metadata = await ResumeParser.parse(file_content, filename)
+            resume_text, metadata = await ResumeParser.parse(
+                file_content,
+                filename,
+            )
+
             logger.info(
                 "Parsed resume for %s with %s words from %s",
                 from_id,
                 metadata.get("word_count", 0),
                 filename,
             )
+
         except Exception as e:
-            logger.error(f"Parse error: {e}")
+            logger.error(f"Parse error: {e}", exc_info=True)
+
             await whatsapp_client.send_message(
                 from_id,
                 f"Sorry, I could not parse your CV: {str(e)}",
             )
             return
 
-        resume_url = await storage.upload_resume(file_content, filename, from_id)
+        resume_url = await storage.upload_resume(
+            file_content,
+            filename,
+            from_id,
+        )
+
         analysis = await ai_engine.analyze(resume_text)
 
         await db.save_analysis(
@@ -192,23 +231,42 @@ async def download_whatsapp_file(file_id: str) -> bytes:
     """
     try:
         url = f"https://graph.facebook.com/v18.0/{file_id}"
-        headers = {"Authorization": f"Bearer {whatsapp_client.token}"}
+
+        headers = {
+            "Authorization": f"Bearer {whatsapp_client.token}",
+        }
 
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers)
+
             if response.status_code != 200:
+                logger.error(
+                    f"Failed to fetch media metadata: {response.text}"
+                )
                 return None
 
             file_data = response.json()
             download_url = file_data.get("url")
+
             if not download_url:
+                logger.error("No download URL returned from WhatsApp API")
                 return None
 
-            download_response = await client.get(download_url, headers=headers)
+            download_response = await client.get(
+                download_url,
+                headers=headers,
+            )
+
+            if download_response.status_code != 200:
+                logger.error(
+                    f"Failed to download media file: {download_response.text}"
+                )
+                return None
+
             return download_response.content
 
     except Exception as e:
-        logger.error(f"File download error: {e}")
+        logger.error(f"File download error: {e}", exc_info=True)
         return None
 
 
@@ -216,8 +274,9 @@ async def send_welcome_message(to: str):
     """Send welcome message with instructions."""
     text = (
         "Hi, welcome to CV Analyzer.\n\n"
-        "We analyze resumes and provide great ATS feedback extremely fast.\n\n"
-        "Please send your CV in PDF or DOCX format, and I will reply with your ATS analysis."
+        "We analyze resumes and provide ATS feedback quickly.\n\n"
+        "Please send your CV in PDF or DOCX format, "
+        "and I will reply with your ATS analysis."
     )
 
     await whatsapp_client.send_message(to, text)
@@ -230,10 +289,14 @@ async def send_status_message(to: str, user_session: dict):
     if last_score:
         text = (
             f"Your last ATS score is {last_score}/100.\n\n"
-            "Send a new resume in PDF or DOCX format if you want a fresh analysis."
+            "Send a new resume in PDF or DOCX format "
+            "if you want a fresh analysis."
         )
     else:
-        text = "You have not submitted a resume yet. Please send your CV in PDF or DOCX format to get started."
+        text = (
+            "You have not submitted a resume yet.\n\n"
+            "Please send your CV in PDF or DOCX format to get started."
+        )
 
     await whatsapp_client.send_message(to, text)
 
@@ -245,7 +308,13 @@ async def send_analysis_results(to: str, analysis: dict):
     weaknesses = analysis.get("weaknesses", [])
     recommendations = analysis.get("recommendations", [])
 
-    score_label = "Strong" if ats_score >= 70 else "Moderate" if ats_score >= 50 else "Needs improvement"
+    score_label = (
+        "Strong"
+        if ats_score >= 70
+        else "Moderate"
+        if ats_score >= 50
+        else "Needs Improvement"
+    )
 
     message = (
         "Resume analysis complete.\n\n"
@@ -261,11 +330,12 @@ async def send_analysis_results(to: str, analysis: dict):
         message += "- Resume submitted successfully\n"
 
     message += "\nAreas to improve:\n"
+
     if weaknesses:
         for weakness in weaknesses[:3]:
             message += f"- {weakness}\n"
     else:
-        message += "- No major issues detected in the initial ATS check\n"
+        message += "- No major issues detected\n"
 
     if recommendations:
         message += "\nTop recommendations:\n"
@@ -280,4 +350,9 @@ async def send_analysis_results(to: str, analysis: dict):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 8000)),
+        reload=False,
+    )
