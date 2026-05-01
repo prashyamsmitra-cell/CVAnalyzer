@@ -162,26 +162,37 @@ async def analyze_resume_bytes(
 ) -> Dict[str, Any]:
     """Parse, analyze, and optionally persist a resume analysis."""
     try:
+        logger.info("Starting resume parse for %s (%s)", user_id, filename)
         resume_text, metadata = await ResumeParser.parse(file_content, filename)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     resume_url: Optional[str] = None
     if persist:
-        resume_url = await storage.upload_resume(file_content, filename, user_id)
+        try:
+            logger.info("Uploading resume for %s to storage", user_id)
+            resume_url = await storage.upload_resume(file_content, filename, user_id)
+        except Exception:
+            logger.exception("Resume upload failed for %s", user_id)
+            resume_url = None
 
+    logger.info("Running ATS analysis for %s", user_id)
     analysis = await ai_engine.analyze(resume_text)
 
     if persist:
-        await db.save_analysis(
-            whatsapp_number=user_id,
-            resume_url=resume_url or "",
-            ats_score=analysis.get("ats_score", 0),
-            strengths=analysis.get("strengths", []),
-            weaknesses=analysis.get("weaknesses", []),
-            missing_sections=analysis.get("missing_sections", []),
-            ai_insights=analysis.get("ai_insights", {}),
-        )
+        try:
+            logger.info("Saving analysis record for %s", user_id)
+            await db.save_analysis(
+                whatsapp_number=user_id,
+                resume_url=resume_url or "",
+                ats_score=analysis.get("ats_score", 0),
+                strengths=analysis.get("strengths", []),
+                weaknesses=analysis.get("weaknesses", []),
+                missing_sections=analysis.get("missing_sections", []),
+                ai_insights=analysis.get("ai_insights", {}),
+            )
+        except Exception:
+            logger.exception("Analysis save failed for %s", user_id)
 
     return {
         "filename": filename,
@@ -261,9 +272,29 @@ async def process_message(message: dict):
                 persist=True,
             )
         except HTTPException as exc:
+            logger.error(
+                "Resume processing validation failed for %s: %s",
+                from_id,
+                exc.detail,
+                exc_info=True,
+            )
             await whatsapp_client.send_message(
                 from_id,
                 f"Sorry, I could not parse your CV: {exc.detail}",
+            )
+            return
+        except Exception as exc:
+            logger.error(
+                "Unexpected resume processing failure for %s",
+                from_id,
+                exc_info=True,
+            )
+            await whatsapp_client.send_message(
+                from_id,
+                (
+                    "Sorry, I could not finish the ATS review for this file. "
+                    "Please try again in a moment, or resend the resume as PDF or DOCX."
+                ),
             )
             return
 
