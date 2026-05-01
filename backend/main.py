@@ -16,7 +16,6 @@ from .ai_engine import get_ai_engine
 from .config import settings
 from .database import DatabaseManager
 from .parser import ResumeParser
-from .storage import StorageManager
 from .whatsapp import WhatsAppClient
 
 
@@ -41,7 +40,6 @@ app.add_middleware(
 
 whatsapp_client = WhatsAppClient()
 db = DatabaseManager()
-storage = StorageManager()
 ai_engine = get_ai_engine()
 
 GREETING_MESSAGES = {"hi", "hello", "hey", "hii", "start", "help"}
@@ -167,29 +165,30 @@ async def analyze_resume_bytes(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    resume_url: Optional[str] = None
-    if persist:
-        try:
-            logger.info("Uploading resume for %s to storage", user_id)
-            resume_url = await storage.upload_resume(file_content, filename, user_id)
-        except Exception:
-            logger.exception("Resume upload failed for %s", user_id)
-            resume_url = None
-
     logger.info("Running ATS analysis for %s", user_id)
     analysis = await ai_engine.analyze(resume_text)
+    processing_log = {
+        "source": "whatsapp" if user_id != "web-user" else "web",
+        "filename": filename,
+        "metadata": metadata,
+    }
 
     if persist:
         try:
             logger.info("Saving analysis record for %s", user_id)
+            ai_insights = analysis.get("ai_insights", {})
+            if not isinstance(ai_insights, dict):
+                ai_insights = {"details": ai_insights}
+            ai_insights["processing_log"] = processing_log
+
             await db.save_analysis(
                 whatsapp_number=user_id,
-                resume_url=resume_url or "",
+                resume_url="",
                 ats_score=analysis.get("ats_score", 0),
                 strengths=analysis.get("strengths", []),
                 weaknesses=analysis.get("weaknesses", []),
                 missing_sections=analysis.get("missing_sections", []),
-                ai_insights=analysis.get("ai_insights", {}),
+                ai_insights=ai_insights,
             )
         except Exception:
             logger.exception("Analysis save failed for %s", user_id)
@@ -198,7 +197,7 @@ async def analyze_resume_bytes(
         "filename": filename,
         "metadata": metadata,
         "analysis": analysis,
-        "resume_url": resume_url,
+        "resume_url": None,
     }
 
 
