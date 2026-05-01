@@ -2,7 +2,7 @@
 WhatsApp Cloud API client for messaging operations.
 Handles webhook verification and message sending.
 """
-from typing import Optional
+from typing import List, Optional
 import httpx
 import logging
 
@@ -20,7 +20,7 @@ class WhatsAppClient:
     def __init__(self):
         self.token = settings.WHATSAPP_TOKEN
         self.phone_number_id = settings.WHATSAPP_PHONE_NUMBER_ID
-        self.api_version = "v18.0"
+        self.api_version = settings.WHATSAPP_API_VERSION
         self.base_url = (
             f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}"
         )
@@ -108,6 +108,67 @@ class WhatsAppClient:
 
         except Exception as e:
             logger.error(f"Send error: {e}")
+            return False
+
+    async def send_template_message(
+        self,
+        to: str,
+        template_name: str,
+        language_code: str = "en_US",
+        components: Optional[List[dict]] = None,
+    ) -> bool:
+        """
+        Send an approved WhatsApp template message.
+        Use this outside the 24-hour customer service window.
+        """
+        if not self.is_configured:
+            logger.warning("Template send skipped because credentials are not configured")
+            return False
+
+        url = f"{self.base_url}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+
+        template_payload = {
+            "name": template_name,
+            "language": {
+                "code": language_code,
+            },
+        }
+        if components:
+            template_payload["components"] = components
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "template",
+            "template": template_payload,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+
+                if response.status_code == 200:
+                    logger.info("Template %s sent to %s", template_name, to)
+                    return True
+
+                logger.error(
+                    "Template send failed: %s - %s",
+                    response.status_code,
+                    response.text,
+                )
+                return False
+
+        except Exception as exc:
+            logger.error("Template send error: %s", exc)
             return False
 
     async def send_interactive_message(

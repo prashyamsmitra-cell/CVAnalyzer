@@ -48,6 +48,7 @@ GREETING_MESSAGES = {"hi", "hello", "hey", "hii", "start", "help"}
 SUPPORTED_EXTENSIONS = {"pdf", "doc", "docx"}
 MESSAGE_DEDUP_TTL_SECONDS = 900
 processed_message_ids: Dict[str, float] = {}
+DEFAULT_LANGUAGE_CODE = "en_US"
 
 
 @app.get("/")
@@ -222,9 +223,9 @@ async def process_message(message: dict):
             await whatsapp_client.send_message(
                 from_id,
                 (
-                    "Hi, welcome to CV Analyzer. "
-                    "We analyze resumes and provide ATS feedback quickly. "
-                    "Please send your CV in PDF or DOCX format to get started."
+                    "You are connected to CV Analyzer. "
+                    "Send your resume in PDF or DOCX format and I will review it for ATS readiness, "
+                    "keyword coverage, section completeness, and improvement opportunities."
                 ),
             )
 
@@ -238,7 +239,10 @@ async def process_message(message: dict):
 
         await whatsapp_client.send_message(
             from_id,
-            "Processing your CV. Please wait a moment.",
+            (
+                "Your resume has been received. "
+                "I am reviewing formatting, keyword alignment, experience signals, and section coverage now."
+            ),
         )
 
         file_content = await download_whatsapp_file(file_id)
@@ -337,11 +341,23 @@ async def download_whatsapp_file(file_id: str) -> Optional[bytes]:
 
 async def send_welcome_message(to: str):
     """Send welcome instructions."""
+    if settings.WHATSAPP_USE_TEMPLATES and settings.WHATSAPP_TEMPLATE_WELCOME:
+        sent = await whatsapp_client.send_template_message(
+            to=to,
+            template_name=settings.WHATSAPP_TEMPLATE_WELCOME,
+            language_code=DEFAULT_LANGUAGE_CODE,
+        )
+        if sent:
+            return
+
     text = (
-        "Hi, welcome to CV Analyzer.\n\n"
-        "We analyze resumes and provide ATS feedback quickly.\n\n"
-        "Please send your CV in PDF or DOCX format, "
-        "and I will reply with your ATS analysis."
+        "Welcome to CV Analyzer.\n\n"
+        "I can review your resume for ATS readiness and share a concise scoring summary.\n\n"
+        "Please send your CV in PDF or DOCX format and I will return:\n"
+        "- an ATS score\n"
+        "- strengths\n"
+        "- improvement areas\n"
+        "- missing sections"
     )
     await whatsapp_client.send_message(to, text)
 
@@ -352,14 +368,13 @@ async def send_status_message(to: str, user_session: dict):
 
     if last_score:
         text = (
-            f"Your last ATS score is {last_score}/100.\n\n"
-            "Send a new resume in PDF or DOCX format "
-            "if you want a fresh analysis."
+            f"Your latest ATS score is {last_score}/100.\n\n"
+            "Send an updated PDF or DOCX resume any time if you want a fresh review."
         )
     else:
         text = (
-            "You have not submitted a resume yet.\n\n"
-            "Please send your CV in PDF or DOCX format to get started."
+            "No resume has been analyzed yet.\n\n"
+            "Send your CV in PDF or DOCX format to begin your ATS review."
         )
 
     await whatsapp_client.send_message(to, text)
@@ -371,6 +386,7 @@ async def send_analysis_results(to: str, analysis: dict):
     strengths = analysis.get("strengths", [])
     weaknesses = analysis.get("weaknesses", [])
     recommendations = analysis.get("recommendations", [])
+    missing_sections = analysis.get("missing_sections", [])
 
     score_label = (
         "Strong"
@@ -380,8 +396,24 @@ async def send_analysis_results(to: str, analysis: dict):
         else "Needs Improvement"
     )
 
+    if settings.WHATSAPP_USE_TEMPLATES and settings.WHATSAPP_TEMPLATE_ANALYSIS_READY:
+        await whatsapp_client.send_template_message(
+            to=to,
+            template_name=settings.WHATSAPP_TEMPLATE_ANALYSIS_READY,
+            language_code=DEFAULT_LANGUAGE_CODE,
+            components=[
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": str(ats_score)},
+                        {"type": "text", "text": score_label},
+                    ],
+                }
+            ],
+        )
+
     message = (
-        "Resume analysis complete.\n\n"
+        "ATS review complete.\n\n"
         f"ATS Score: {ats_score}/100\n"
         f"Overall: {score_label}\n\n"
         "Strengths:\n"
@@ -406,7 +438,12 @@ async def send_analysis_results(to: str, analysis: dict):
         for recommendation in recommendations[:2]:
             message += f"- {recommendation}\n"
 
-    message += "\nSend another CV anytime for a new ATS analysis."
+    if missing_sections:
+        message += "\nMissing or weak sections:\n"
+        for section in missing_sections[:3]:
+            message += f"- {section}\n"
+
+    message += "\nSend another CV any time for a fresh ATS review."
     await whatsapp_client.send_message(to, message)
 
 

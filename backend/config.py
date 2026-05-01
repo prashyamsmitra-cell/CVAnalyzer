@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     WHATSAPP_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     WHATSAPP_VERIFY_TOKEN: str = ""
+    WHATSAPP_API_VERSION: str = "v18.0"
+    WHATSAPP_USE_TEMPLATES: bool = False
+    WHATSAPP_TEMPLATE_WELCOME: str = ""
+    WHATSAPP_TEMPLATE_ANALYSIS_READY: str = ""
 
     # Supabase Configuration
     SUPABASE_URL: str = ""
@@ -70,6 +74,18 @@ class Settings(BaseSettings):
             if normalized in {"1", "true", "yes", "on", "debug"}:
                 return True
             if normalized in {"0", "false", "no", "off", "release", "prod", "production"}:
+                return False
+        return value
+
+    @field_validator("WHATSAPP_USE_TEMPLATES", mode="before")
+    @classmethod
+    def normalize_whatsapp_templates_flag(cls, value):
+        """Accept common string values for enabling template sends."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
                 return False
         return value
 
