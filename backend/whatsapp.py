@@ -6,7 +6,7 @@ from typing import Optional
 import httpx
 import logging
 
-from config import settings
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,11 @@ class WhatsAppClient:
         self.base_url = (
             f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}"
         )
+
+    @property
+    def is_configured(self) -> bool:
+        """Return True when WhatsApp credentials are available."""
+        return bool(self.token and self.phone_number_id and settings.WHATSAPP_VERIFY_TOKEN)
 
     def verify_webhook(
         self,
@@ -62,6 +67,10 @@ class WhatsAppClient:
         Send text message to WhatsApp user.
         Returns True on success.
         """
+        if not self.is_configured:
+            logger.warning("WhatsApp send skipped because credentials are not configured")
+            return False
+
         url = f"{self.base_url}/messages"
 
         headers = {
@@ -110,6 +119,10 @@ class WhatsAppClient:
         """
         Send interactive button message.
         """
+        if not self.is_configured:
+            logger.warning("Interactive send skipped because credentials are not configured")
+            return False
+
         url = f"{self.base_url}/messages"
 
         headers = {
@@ -158,6 +171,10 @@ class WhatsAppClient:
         Download media file from WhatsApp servers.
         Returns file content as bytes.
         """
+        if not self.is_configured:
+            logger.warning("Media download skipped because credentials are not configured")
+            return None
+
         media_url = f"https://graph.facebook.com/{self.api_version}/{media_id}"
 
         headers = {
@@ -198,6 +215,10 @@ class WhatsAppClient:
         """
         Mark message as read.
         """
+        if not self.is_configured:
+            logger.warning("Mark as read skipped because credentials are not configured")
+            return False
+
         url = f"{self.base_url}/messages"
 
         headers = {

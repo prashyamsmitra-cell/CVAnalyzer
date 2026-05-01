@@ -5,7 +5,7 @@ Provides enhanced insights using open-source models.
 from typing import Dict, List, Optional
 import httpx
 import json
-from config import settings
+from .config import settings
 
 class OllamaClient:
     """

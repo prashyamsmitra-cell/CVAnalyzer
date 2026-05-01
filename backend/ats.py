@@ -4,7 +4,7 @@ Rule-based analysis for resume optimization.
 """
 from typing import Dict, List, Tuple
 import re
-from config import settings
+from .config import settings
 
 class ATSScorer:
     """

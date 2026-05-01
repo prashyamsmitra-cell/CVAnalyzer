@@ -2,10 +2,10 @@
 AI Abstraction Layer for resume analysis.
 Provides unified interface for multiple AI providers.
 """
-from typing import Dict, List, Optional, Literal
-from config import settings
-from ats import ATSScorer, analyze_resume
-from ollama_client import ollama
+from typing import Dict, List, Optional
+from .config import settings
+from .ats import analyze_resume
+from .ollama_client import ollama
 import logging
 
 logger = logging.getLogger(__name__)

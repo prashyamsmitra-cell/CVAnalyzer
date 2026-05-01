@@ -3,6 +3,7 @@ Configuration management for WhatsApp CV Analyzer.
 Loads environment variables and provides typed configuration.
 """
 from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,9 +26,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
 
     # WhatsApp Cloud API (REQUIRED from Render / .env)
-    WHATSAPP_TOKEN: str
-    WHATSAPP_PHONE_NUMBER_ID: str
-    WHATSAPP_VERIFY_TOKEN: str
+    WHATSAPP_TOKEN: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_VERIFY_TOKEN: str = ""
 
     # Supabase Configuration
     SUPABASE_URL: str = ""
@@ -59,6 +60,18 @@ class Settings(BaseSettings):
     ATS_WEIGHT_SECTIONS: float = 0.25
     ATS_WEIGHT_LENGTH: float = 0.15
     ATS_WEIGHT_ACTION_VERBS: float = 0.15
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def normalize_debug(cls, value):
+        """Accept common deployment strings for DEBUG."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "prod", "production"}:
+                return False
+        return value
 
 
 @lru_cache()

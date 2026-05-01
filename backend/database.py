@@ -4,7 +4,7 @@ Handles user sessions, resume metadata, and analysis history.
 """
 from typing import Optional, Dict, Any
 from supabase import create_client, Client
-from config import settings
+from .config import settings
 import json
 from datetime import datetime
 
